@@ -1,5 +1,7 @@
 # Calendar to Discord Bot
 
+<img width="1200" height="1600" alt="Image" src="https://github.com/user-attachments/assets/90bba4fc-b093-4fbb-81f0-68a357697a3f" />
+
 구글 캘린더 정보를 읽어서 한달치 스케줄 이미지를 생성하고 디스코드 채널에 게시하는 봇입니다.
 
 ## 기능
