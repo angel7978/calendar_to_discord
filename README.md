@@ -43,8 +43,9 @@ pip install -r requirements.txt
 1. [Discord Developer Portal](https://discord.com/developers/applications)에서 애플리케이션 생성
 2. Bot 섹션에서 봇 생성 및 토큰 복사
 3. OAuth2 > URL Generator에서 `bot`과 `applications.commands` 스코프 선택
-4. 생성된 URL로 봇을 서버에 초대
-5. 채널 ID 확인 (디스코드 개발자 모드 활성화 후 채널 우클릭 > ID 복사)
+4. Bot Permission에서 `Send Messages`와 `Attach Files` 선택
+5. 생성된 URL로 봇을 서버에 초대
+6. 채널 ID 확인 (디스코드 개발자 모드 활성화 후 채널 우클릭 > ID 복사)
 
 ### 4. 환경 변수 설정
 
