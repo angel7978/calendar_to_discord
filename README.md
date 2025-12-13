@@ -1,5 +1,7 @@
 # Calendar to Discord Bot
 
+<img width="1200" height="1600" alt="Image" src="https://github.com/user-attachments/assets/90bba4fc-b093-4fbb-81f0-68a357697a3f" />
+
 구글 캘린더 정보를 읽어서 한달치 스케줄 이미지를 생성하고 디스코드 채널에 게시하는 봇입니다.
 
 ## 기능
@@ -41,8 +43,9 @@ pip install -r requirements.txt
 1. [Discord Developer Portal](https://discord.com/developers/applications)에서 애플리케이션 생성
 2. Bot 섹션에서 봇 생성 및 토큰 복사
 3. OAuth2 > URL Generator에서 `bot`과 `applications.commands` 스코프 선택
-4. 생성된 URL로 봇을 서버에 초대
-5. 채널 ID 확인 (디스코드 개발자 모드 활성화 후 채널 우클릭 > ID 복사)
+4. Bot Permission에서 `Send Messages`와 `Attach Files` 선택
+5. 생성된 URL로 봇을 서버에 초대
+6. 채널 ID 확인 (디스코드 개발자 모드 활성화 후 채널 우클릭 > ID 복사)
 
 ### 4. 환경 변수 설정
 
@@ -136,7 +139,7 @@ calendar_to_discord/
 
 - **이미지 생성**: Pillow를 사용한 커스텀 캘린더 레이아웃
 - **다중 날짜 이벤트**: 여러 날짜에 걸친 이벤트를 자동으로 분할하여 표시
-- **한글 지원**: MaruBuri 폰트를 사용한 한글 이벤트 제목 표시
+- **한글 지원**: MaruBuri 폰트를 사용한 한글 이벤트 제목 표시 (이 봇에는 네이버에서 제공한 마루부리 글꼴이 적용되어 있습니다.)
 - **자동 업데이트**: ETag 기반 변경 감지로 효율적인 캘린더 모니터링
 - **새 메시지 게시**: 기존 메시지를 수정하지 않고 항상 새로운 메시지로 게시
 
