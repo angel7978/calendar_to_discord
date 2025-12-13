@@ -72,6 +72,37 @@ class CalendarService:
         self.service = build('calendar', 'v3', credentials=creds)
         logger.info("구글 캘린더 서비스 초기화 완료")
     
+    def _ensure_valid_credentials(self):
+        """
+        토큰이 유효한지 확인하고 필요시 갱신합니다.
+        API 호출 전에 항상 호출해야 합니다.
+        """
+        if not self.credentials:
+            logger.warning("토큰이 없음, 재인증 시작")
+            self._authenticate()
+            return
+        
+        # 토큰이 만료되었거나 곧 만료될 경우 갱신
+        if self.credentials.expired and self.credentials.refresh_token:
+            try:
+                logger.info("토큰 만료 감지, 갱신 시도")
+                self.credentials.refresh(Request())
+                
+                # 갱신된 토큰 저장
+                with open(Config.GOOGLE_TOKEN_FILE, 'w') as token:
+                    token.write(self.credentials.to_json())
+                logger.info("토큰 갱신 및 저장 완료")
+                
+                # 서비스 재생성 (새로운 토큰으로)
+                self.service = build('calendar', 'v3', credentials=self.credentials)
+            except Exception as e:
+                logger.error("토큰 갱신 실패, 재인증 필요", error=str(e))
+                # 갱신 실패 시 재인증
+                self._authenticate()
+        elif not self.credentials.valid:
+            logger.warning("토큰이 유효하지 않음, 재인증 시작")
+            self._authenticate()
+    
     def get_events_for_month(
         self, 
         year: int, 
@@ -89,27 +120,30 @@ class CalendarService:
         Returns:
             이벤트 리스트
         """
+        # API 호출 전 토큰 유효성 확인
+        self._ensure_valid_credentials()
+        
+        # 타임존 설정
+        local_tz = pytz.timezone(timezone)
+        
+        # 해당 월의 시작과 끝 시간 계산 (타임존 적용)
+        start_date = local_tz.localize(datetime(year, month, 1, 0, 0, 0))
+        if month == 12:
+            end_date = local_tz.localize(datetime(year + 1, 1, 1, 0, 0, 0))
+        else:
+            end_date = local_tz.localize(datetime(year, month + 1, 1, 0, 0, 0))
+        
+        time_min = start_date.isoformat()
+        time_max = end_date.isoformat()
+        
+        logger.info(
+            "이벤트 조회 시작",
+            calendar_id=Config.GOOGLE_CALENDAR_ID,
+            year=year,
+            month=month
+        )
+        
         try:
-            # 타임존 설정
-            local_tz = pytz.timezone(timezone)
-            
-            # 해당 월의 시작과 끝 시간 계산 (타임존 적용)
-            start_date = local_tz.localize(datetime(year, month, 1, 0, 0, 0))
-            if month == 12:
-                end_date = local_tz.localize(datetime(year + 1, 1, 1, 0, 0, 0))
-            else:
-                end_date = local_tz.localize(datetime(year, month + 1, 1, 0, 0, 0))
-            
-            time_min = start_date.isoformat()
-            time_max = end_date.isoformat()
-            
-            logger.info(
-                "이벤트 조회 시작",
-                calendar_id=Config.GOOGLE_CALENDAR_ID,
-                year=year,
-                month=month
-            )
-            
             events_result = self.service.events().list(
                 calendarId=Config.GOOGLE_CALENDAR_ID,
                 timeMin=time_min,
@@ -132,8 +166,47 @@ class CalendarService:
             return formatted_events
             
         except HttpError as error:
-            logger.error("구글 캘린더 API 오류", error=str(error))
-            raise
+            # 인증 에러인 경우 토큰 갱신 후 재시도
+            error_str = str(error)
+            if 'invalid_grant' in error_str or 'Token has been expired' in error_str:
+                logger.warning("인증 에러 감지, 토큰 갱신 후 재시도", error=error_str)
+                try:
+                    # 토큰 갱신 시도
+                    if self.credentials and self.credentials.refresh_token:
+                        self.credentials.refresh(Request())
+                        with open(Config.GOOGLE_TOKEN_FILE, 'w') as token:
+                            token.write(self.credentials.to_json())
+                        self.service = build('calendar', 'v3', credentials=self.credentials)
+                        logger.info("토큰 갱신 완료, 재시도")
+                        
+                        # 재시도
+                        events_result = self.service.events().list(
+                            calendarId=Config.GOOGLE_CALENDAR_ID,
+                            timeMin=time_min,
+                            timeMax=time_max,
+                            maxResults=2500,
+                            singleEvents=True,
+                            orderBy='startTime'
+                        ).execute()
+                        
+                        events = events_result.get('items', [])
+                        logger.info("이벤트 조회 완료 (재시도)", count=len(events))
+                        
+                        formatted_events = []
+                        for event in events:
+                            formatted_event = self._format_event(event)
+                            if formatted_event:
+                                formatted_events.append(formatted_event)
+                        
+                        return formatted_events
+                except Exception as refresh_error:
+                    logger.error("토큰 갱신 실패", error=str(refresh_error))
+                    # 갱신 실패 시 재인증
+                    self._authenticate()
+                    raise
+            else:
+                logger.error("구글 캘린더 API 오류", error=error_str)
+                raise
         except Exception as e:
             logger.error("이벤트 조회 중 오류 발생", error=str(e))
             raise
@@ -186,11 +259,38 @@ class CalendarService:
         Returns:
             캘린더 ETag 또는 None
         """
+        # API 호출 전 토큰 유효성 확인
+        self._ensure_valid_credentials()
+        
         try:
             calendar = self.service.calendars().get(
                 calendarId=Config.GOOGLE_CALENDAR_ID
             ).execute()
             return calendar.get('etag')
+        except HttpError as error:
+            # 인증 에러인 경우 토큰 갱신 후 재시도
+            error_str = str(error)
+            if 'invalid_grant' in error_str or 'Token has been expired' in error_str:
+                logger.warning("인증 에러 감지 (ETag), 토큰 갱신 후 재시도", error=error_str)
+                try:
+                    if self.credentials and self.credentials.refresh_token:
+                        self.credentials.refresh(Request())
+                        with open(Config.GOOGLE_TOKEN_FILE, 'w') as token:
+                            token.write(self.credentials.to_json())
+                        self.service = build('calendar', 'v3', credentials=self.credentials)
+                        logger.info("토큰 갱신 완료 (ETag), 재시도")
+                        
+                        calendar = self.service.calendars().get(
+                            calendarId=Config.GOOGLE_CALENDAR_ID
+                        ).execute()
+                        return calendar.get('etag')
+                except Exception as refresh_error:
+                    logger.error("토큰 갱신 실패 (ETag)", error=str(refresh_error))
+                    self._authenticate()
+                    return None
+            else:
+                logger.warning("ETag 조회 실패", error=error_str)
+                return None
         except Exception as e:
             logger.warning("ETag 조회 실패", error=str(e))
             return None

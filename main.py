@@ -2,6 +2,7 @@
 from datetime import datetime
 from io import BytesIO
 from typing import Optional
+import pytz
 
 import discord
 from discord import app_commands
@@ -170,6 +171,19 @@ async def check_calendar_updates():
     global last_calendar_etag
     
     try:
+        # 현재 시간 확인 (밤 10시 ~ 아침 8시 사이면 알림 전송 중지)
+        timezone = pytz.timezone(Config.TIMEZONE)
+        current_time = datetime.now(timezone)
+        current_hour = current_time.hour
+        
+        # 22:00 ~ 07:59 사이면 알림 전송 중지
+        if current_hour >= 22 or current_hour < 8:
+            logger.info(
+                "알림 전송 시간대 아님 (밤 10시 ~ 아침 8시)",
+                current_hour=current_hour
+            )
+            return
+        
         logger.info("캘린더 변경사항 체크 시작")
         
         # ETag로 변경 감지 시도
