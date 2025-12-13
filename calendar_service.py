@@ -40,16 +40,30 @@ class CalendarService:
             except Exception as e:
                 logger.warning("토큰 파일 로드 실패", error=str(e))
         
-        # 토큰이 없거나 만료된 경우 재인증
+        # 토큰이 만료된 경우 refresh_token으로 갱신 시도
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                logger.info("토큰 만료 감지, refresh_token으로 갱신 시도")
+                creds.refresh(Request())
+                logger.info("토큰 갱신 완료")
+                
+                # 갱신된 토큰 저장
+                with open(Config.GOOGLE_TOKEN_FILE, 'w') as token:
+                    token.write(creds.to_json())
+                logger.info("갱신된 토큰 파일 저장 완료")
+            except Exception as e:
+                logger.error("토큰 갱신 실패", error=str(e))
+                # refresh_token도 만료되었거나 취소된 경우
+                raise RuntimeError(
+                    "토큰 갱신에 실패했습니다. refresh_token이 만료되었거나 취소되었을 수 있습니다.\n"
+                    "서버 환경에서는 자동 인증이 불가능합니다.\n"
+                    f"로컬 환경에서 다음 명령을 실행하여 새로운 토큰을 생성하세요:\n"
+                    f"  python save_credentials.py\n"
+                    f"생성된 {Config.GOOGLE_TOKEN_FILE} 파일을 서버에 업로드하세요."
+                )
+        
+        # 토큰이 없거나 유효하지 않은 경우
         if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                try:
-                    creds.refresh(Request())
-                    logger.info("토큰 갱신 완료")
-                except Exception as e:
-                    logger.warning("토큰 갱신 실패", error=str(e))
-                    creds = None
-            
             if not creds:
                 if not os.path.exists(Config.GOOGLE_CREDENTIALS_FILE):
                     raise FileNotFoundError(
@@ -57,11 +71,14 @@ class CalendarService:
                         "구글 클라우드 콘솔에서 credentials.json을 다운로드하세요."
                     )
                 
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    Config.GOOGLE_CREDENTIALS_FILE, SCOPES
+                # 서버 환경에서는 브라우저 인증 불가능
+                raise RuntimeError(
+                    f"{Config.GOOGLE_TOKEN_FILE} 파일이 없거나 유효하지 않습니다.\n"
+                    "서버 환경에서는 자동 인증이 불가능합니다.\n"
+                    "로컬 환경에서 다음 명령을 실행하여 토큰을 생성하세요:\n"
+                    "  python save_credentials.py\n"
+                    f"생성된 {Config.GOOGLE_TOKEN_FILE} 파일을 서버에 업로드하세요."
                 )
-                creds = flow.run_local_server(port=0)
-                logger.info("새로운 인증 완료")
             
             # 토큰 저장
             with open(Config.GOOGLE_TOKEN_FILE, 'w') as token:
@@ -78,9 +95,13 @@ class CalendarService:
         API 호출 전에 항상 호출해야 합니다.
         """
         if not self.credentials:
-            logger.warning("토큰이 없음, 재인증 시작")
-            self._authenticate()
-            return
+            logger.error("토큰이 없음")
+            raise RuntimeError(
+                f"{Config.GOOGLE_TOKEN_FILE} 파일이 없습니다.\n"
+                "로컬 환경에서 다음 명령을 실행하여 토큰을 생성하세요:\n"
+                "  python save_credentials.py\n"
+                f"생성된 {Config.GOOGLE_TOKEN_FILE} 파일을 서버에 업로드하세요."
+            )
         
         # 토큰이 만료되었거나 곧 만료될 경우 갱신
         if self.credentials.expired and self.credentials.refresh_token:
@@ -96,12 +117,22 @@ class CalendarService:
                 # 서비스 재생성 (새로운 토큰으로)
                 self.service = build('calendar', 'v3', credentials=self.credentials)
             except Exception as e:
-                logger.error("토큰 갱신 실패, 재인증 필요", error=str(e))
-                # 갱신 실패 시 재인증
-                self._authenticate()
+                logger.error("토큰 갱신 실패", error=str(e))
+                # 서버 환경에서는 재인증 불가능하므로 에러 발생
+                raise RuntimeError(
+                    "토큰 갱신에 실패했습니다. 서버 환경에서는 자동 인증이 불가능합니다.\n"
+                    "로컬 환경에서 다음 명령을 실행하여 새로운 토큰을 생성하세요:\n"
+                    "  python save_credentials.py\n"
+                    f"생성된 {Config.GOOGLE_TOKEN_FILE} 파일을 서버에 업로드하세요."
+                )
         elif not self.credentials.valid:
-            logger.warning("토큰이 유효하지 않음, 재인증 시작")
-            self._authenticate()
+            logger.error("토큰이 유효하지 않음")
+            raise RuntimeError(
+                f"{Config.GOOGLE_TOKEN_FILE} 파일이 유효하지 않습니다.\n"
+                "로컬 환경에서 다음 명령을 실행하여 새로운 토큰을 생성하세요:\n"
+                "  python save_credentials.py\n"
+                f"생성된 {Config.GOOGLE_TOKEN_FILE} 파일을 서버에 업로드하세요."
+            )
     
     def get_events_for_month(
         self, 
@@ -169,10 +200,11 @@ class CalendarService:
             # 인증 에러인 경우 토큰 갱신 후 재시도
             error_str = str(error)
             if 'invalid_grant' in error_str or 'Token has been expired' in error_str:
-                logger.warning("인증 에러 감지, 토큰 갱신 후 재시도", error=error_str)
+                logger.error("인증 에러 감지", error=error_str)
+                # 토큰 갱신 시도
                 try:
-                    # 토큰 갱신 시도
                     if self.credentials and self.credentials.refresh_token:
+                        logger.info("토큰 갱신 시도")
                         self.credentials.refresh(Request())
                         with open(Config.GOOGLE_TOKEN_FILE, 'w') as token:
                             token.write(self.credentials.to_json())
@@ -201,9 +233,13 @@ class CalendarService:
                         return formatted_events
                 except Exception as refresh_error:
                     logger.error("토큰 갱신 실패", error=str(refresh_error))
-                    # 갱신 실패 시 재인증
-                    self._authenticate()
-                    raise
+                    # 서버 환경에서는 재인증 불가능하므로 에러 발생
+                    raise RuntimeError(
+                        "토큰 갱신에 실패했습니다. 서버 환경에서는 자동 인증이 불가능합니다.\n"
+                        "로컬 환경에서 다음 명령을 실행하여 새로운 토큰을 생성하세요:\n"
+                        "  python save_credentials.py\n"
+                        f"생성된 {Config.GOOGLE_TOKEN_FILE} 파일을 서버에 업로드하세요."
+                    )
             else:
                 logger.error("구글 캘린더 API 오류", error=error_str)
                 raise
@@ -271,9 +307,10 @@ class CalendarService:
             # 인증 에러인 경우 토큰 갱신 후 재시도
             error_str = str(error)
             if 'invalid_grant' in error_str or 'Token has been expired' in error_str:
-                logger.warning("인증 에러 감지 (ETag), 토큰 갱신 후 재시도", error=error_str)
+                logger.error("인증 에러 감지 (ETag)", error=error_str)
                 try:
                     if self.credentials and self.credentials.refresh_token:
+                        logger.info("토큰 갱신 시도 (ETag)")
                         self.credentials.refresh(Request())
                         with open(Config.GOOGLE_TOKEN_FILE, 'w') as token:
                             token.write(self.credentials.to_json())
@@ -286,7 +323,8 @@ class CalendarService:
                         return calendar.get('etag')
                 except Exception as refresh_error:
                     logger.error("토큰 갱신 실패 (ETag)", error=str(refresh_error))
-                    self._authenticate()
+                    # 서버 환경에서는 재인증 불가능하므로 None 반환 (에러 발생하지 않음)
+                    # ETag 조회 실패는 치명적이지 않으므로 None 반환
                     return None
             else:
                 logger.warning("ETag 조회 실패", error=error_str)
